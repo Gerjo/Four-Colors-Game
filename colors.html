@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html manifest="gerjo.manifest.php">
+<head>
+<meta name="viewport" content="user-scalable=no, width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<!--<meta name="apple-mobile-web-app-status-bar-style" content="black" />-->
+<link rel="apple-touch-icon" href="icon.gif"/>
+<!--<link rel="apple-touch-startup-image" href="icon.gif" />-->
+<title>Four Colors</title>
+<script src="jquery-1.4.4.min.js" type="text/javascript"></script>
+<link rel="stylesheet" href="iPhoneButtons.css" />
+
+<script type="text/javascript">
+
+var GerjoFourColorGame;
+var gerjoCardLayout;
+
+function init() {
+	gerjoCardLayout = new GerjoCardLayout("card_intro", "card_in_game_menu", 'card_game');
+	gerjoCardLayout.showCard("card_intro");
+	gerjoCardLayout.showCard("card_game");
+	
+	GerjoFourColorGame = new GerjoFourColorGame();
+	GerjoFourColorGame.init();
+	
+	//setInterval("gerjoCardLayout.update()", 100);
+	
+	// Add support for normal touchscreen-less browsers:
+	if(!(navigator.userAgent.match(/iPhone/i)) && !(navigator.userAgent.match(/iPod/i))) { 
+		if(!document.all) document.captureEvents(Event.MOUSEMOVE)
+			document.getElementById("canvas").onmousedown = mouseRegisterCallback;
+		
+		for(var i = 0; i < 4; ++i) {
+			eval('document.getElementById("colorSelectorBox_' + i +'").onmousedown = function(e) { GerjoFourColorGame.switchColor(' + i +'); } ');
+		}
+		
+		document.getElementById('touchToPaint').onmousedown = function onMouseMove(e) {
+			mouseRegisterCallback(e);
+			
+			if($("#touchToPaint").is(":visible")) {
+				$("#touchToPaint").fadeOut();
+				$("#paintAll").fadeIn();
+			}
+			
+		};
+		
+		document.getElementById('paintAll').onmousedown = function onMouseMove(e) {
+			mouseRegisterCallback(e);
+			
+			if(GerjoFourColorGame.getCurrentLevelId() != 1) {
+				$("#paintAll").fadeOut();
+			}
+		};
+		
+	// Touchscreen support:
+	} else {
+		document.getElementById("canvas").ontouchstart = function(e) {
+			GerjoFourColorGame.onTouch(new Point(e.targetTouches[0].clientX, e.targetTouches[0].clientY));
+		};
+		
+		for(var i = 0; i < 4; ++i) {
+			eval('document.getElementById("colorSelectorBox_' + i +'").ontouchstart = function(e) { GerjoFourColorGame.switchColor(' + i +'); } ');
+		}
+		
+		document.getElementById('touchToPaint').ontouchstart = function(e) {
+			if($("#touchToPaint").is(":visible")) {
+				$("#touchToPaint").fadeOut();
+				$("#paintAll").fadeIn();
+			}
+			GerjoFourColorGame.onTouch(new Point(e.targetTouches[0].clientX, e.targetTouches[0].clientY));
+		};
+		
+		document.getElementById('paintAll').ontouchstart = function(e) {
+			if(GerjoFourColorGame.getCurrentLevelId() != 1) {
+				$("#paintAll").fadeOut();
+			}
+			GerjoFourColorGame.onTouch(new Point(e.targetTouches[0].clientX, e.targetTouches[0].clientY));
+		};
+		
+	}
+}
+
+function mouseRegisterCallback(e) {
+	if(document.all) {
+		tempX = event.clientX + document.body.scrollLeft
+		tempY = event.clientY + document.body.scrollTop
+	} else {
+		tempX = e.pageX
+		tempY = e.pageY
+	}
+			
+	GerjoFourColorGame.onTouch(new Point(tempX, tempY));
+}
+
+
+
+
+function GerjoFourColorGame() {
+	var graphics        = null;
+	var canvas          = null;
+	var polygons        = new Array();
+	var adjacencyMatrix = new Array();
+	var currentLevel    = 1;
+	
+	// Color settings:
+	var fillColors   = ["#6600ff","#ff00c0","#98e88b","#fdff5b"];
+	var defaultColor = "";
+	var colorIndex   = 0;
+
+	this.init = function() {
+		canvas   = document.getElementById("canvas");
+		graphics = canvas.getContext("2d");
+		
+		
+		this.restartGame();
+		this.loadSelectLevelPanel();
+	}
+	
+	this.getCurrentLevelId = function () {
+		return currentLevel;
+	}
+	
+	this.loadLevel = function(id) {
+		var data = LevelFactory(id);
+		
+		if(data !== false) {
+			
+			adjacencyMatrix = data.adjacencyMatrix;
+			polygons		= data.polygons;
+			currentLevel	= id;
+			document.getElementById('currentLevel').innerHTML   = id + " - " + data.name;
+			document.getElementById('level_in_popup').innerHTML = id;
+			this.drawAllPolygons();
+			
+			if(id != 1) {
+				$("#selectAcolor").fadeOut();
+			} else {
+				this.unHighlightColor();
+				$("#selectAcolor").fadeIn();
+			}
+			
+			$("#touchToPaint").fadeOut();
+			$("#paintAll").fadeOut();
+			
+			
+			return true;
+		}
+		
+		return false;
+	}
+	
+	this.loadSelectLevelPanel = function() {
+		document.getElementById("leveloption").innerHTML = "";
+		var i = 1;
+		var data;
+		while(1) {
+			
+			if((data = LevelFactory(i)) !== false) {
+				document.getElementById("leveloption").innerHTML += '<div onClick="GerjoFourColorGame.loadLevel(' + i + ');gerjoCardLayout.hideCard(\'card_intro\');gerjoCardLayout.hideCard(\'card_in_game_menu\');">Level ' + i + " - " + data.name + "</div>";
+			} else {
+				break;
+			}
+			
+			++i;
+		}
+	
+	}
+	
+	this.retryLevel = function() {
+		$("#popup_level_completed").fadeOut();
+		$("#popup_game_completed").fadeOut();
+		this.loadLevel(currentLevel);
+	}
+	
+	this.nextLevel = function() {
+		if(this.hasWonGame()) {
+			$("#popup_level_completed").fadeOut();
+			
+			if(!this.loadLevel(currentLevel+1)) {
+				$("#popup_game_completed").fadeIn();
+			}
+			
+		}
+	}
+	
+	this.restartGame = function() {
+		$("#popup_level_completed").fadeOut();
+		$("#popup_game_completed").fadeOut();
+		
+		$("#touchToPaint").fadeOut();
+		$("#paintAll").fadeOut();
+		$("#selectAcolor").fadeIn();
+		
+		this.unHighlightColor();
+		
+		// unselect color
+		currentLevel = 1;
+		this.loadLevel(currentLevel);
+	}
+	
+	this.onTouch = function(location) {
+	
+		// Correction required b/c location is based on the top left 
+		// corner of the screen, not the canvas element.
+		location = location.substract(new Point(canvas.offsetLeft, canvas.offsetTop));
+	
+		for(var k in polygons) {
+			if(polygons[k].hasPointInPolygon(location)) {
+				if(polygons[k].fillColor == fillColors[colorIndex]) {
+					polygons[k].fillColor = defaultColor;
+				} else {
+					polygons[k].fillColor = fillColors[colorIndex];
+				}
+			}
+		}
+		this.drawAllPolygons();
+		
+		if(this.hasWonGame()) {
+			if(LevelFactory(currentLevel + 1) === false) {
+				setTimeout(function() { $("#popup_game_completed").fadeIn(); }, 200);
+				
+			} else {
+				setTimeout(function() { $("#popup_level_completed").fadeIn(); }, 200);
+			}
+		}
+	}
+	
+	this.drawAllPolygons = function() {
+		graphics.clearRect(0, 0, canvas.width, canvas.height);
+		for(var k in polygons) {
+			polygons[k].draw(graphics);
+		}
+	}
+	
+	this.switchColor = function(index) {
+		for(var i = 0; i < 4; ++i) {
+			if(i == index) {
+				document.getElementById("colorSelector_" + i).style.display = '';
+			} else {
+				document.getElementById("colorSelector_" + i).style.display = 'none';
+			}
+		}
+		colorIndex = index;
+		
+		if($("#selectAcolor").is(':visible')) {
+			$("#selectAcolor").fadeOut();
+			$("#touchToPaint").fadeIn();
+		}
+		
+	}
+	
+	this.unHighlightColor = function() {
+		for(var i = 0; i < 4; ++i) {
+			document.getElementById("colorSelector_" + i).style.display = 'none';
+		}
+	}
+		
+	this.hasWonGame = function() {
+		var faults   = 0;
+		var debugLog = "";
+		for(var k in polygons) {
+			// A non colored polygon:
+			if(polygons[k].fillColor == defaultColor) {
+				++faults;
+				//return false;
+				continue;
+			}
+			
+			for(var j in adjacencyMatrix[k]) {
+				if(adjacencyMatrix[k][j] != k && polygons[k].fillColor == polygons[adjacencyMatrix[k][j]].fillColor) {
+					++faults;
+					if(polygons[k].fillColor != defaultColor) {
+						debugLog += k + " " + polygons[k].fillColor + " == " + j + " " + polygons[adjacencyMatrix[k][j]].fillColor + "<br />";
+					}
+				}
+			}
+		}
+		
+		//document.getElementById('debug').innerHTML = "errors: " + faults + "<br />" + debugLog;
+		
+		return (faults == 0);
+	}
+}
+
+
+function LevelFactory(id) {
+	var polygons        = new Array();
+	var adjacencyMatrix = new Array();
+	var translate       = new Point(.5, .5);
+	var name			= "";
+	
+	switch(id) {
+		case 1: 
+			name = "Squares";
+			translate = new Point(9.5, .5);
+			polygons[0]  = new Polygon([60,80],[150,80],[150,170],[60,170]);
+			polygons[1]  = new Polygon([150,80],[240,80],[240,170],[150,170]);
+			polygons[2]  = new Polygon([60,170],[150,170],[150,260],[60,260]);
+			polygons[3]  = new Polygon([150,170],[240,170],[240,260],[150,260]);
+
+			adjacencyMatrix[0]  = [1,2];
+			adjacencyMatrix[1]  = [0,3];
+			adjacencyMatrix[2]  = [0,3];
+			adjacencyMatrix[3]  = [1,2];
+
+			break;
+						
+		case 2:
+			name = "Tangram";
+			// Tangram
+			translate = new Point(39.5, 50.5);
+			polygons[0]  = new Polygon([0,0],[120,120],[0,240]);
+			polygons[1]  = new Polygon([0,0],[240,0],[120,120]);
+			polygons[2]  = new Polygon([240,0],[240,120],[180,60]);
+			polygons[3]  = new Polygon([180,60],[240,120],[180,180],[120,120]);
+			polygons[4]  = new Polygon([120,120],[180,180],[60,180]);
+			polygons[5]  = new Polygon([60,180],[180,180],[120,240],[0,240]);
+			polygons[6]  = new Polygon([240,120],[240,240],[120,240]);
+			
+			adjacencyMatrix[0]  = [1,4,5];
+			adjacencyMatrix[1]  = [0,2,3];
+			adjacencyMatrix[2]  = [1,3];
+			adjacencyMatrix[3]  = [2,4,6];
+			adjacencyMatrix[4]  = [0,3,5];
+			adjacencyMatrix[5]  = [0,4,6];
+			adjacencyMatrix[6]  = [3,5];
+			break;
+			
+		case 3:
+			name = "More Squares";
+			translate = new Point(9.5, .5);
+
+			polygons[0]  = new Polygon([30,50],[150,50],[150,80],[60,80],[60,260],[150,260],[150,290],[30,290]);
+			polygons[1]  = new Polygon([60,80],[150,80],[150,130],[110,130],[110,170],[60,170]);
+			polygons[2]  = new Polygon([150,80],[240,80],[240,170],[190,170],[190,130],[150,130]);
+			polygons[3]  = new Polygon([60,170],[110,170],[110,210],[150,210],[150,260],[60,260]);
+			polygons[4]  = new Polygon([190,170],[240,170],[240,260],[150,260],[150,210],[190,210]);
+			polygons[5]  = new Polygon([110,130],[190,130],[190,210],[110,210]);
+			polygons[6]  = new Polygon([150,50],[270,50],[270,290],[150,290],[150,260],[240,260],[240,80],[150,80]);
+			
+			adjacencyMatrix[0]  = [1,3,6];
+			adjacencyMatrix[1]  = [0,2,3,5];
+			adjacencyMatrix[2]  = [1,4,5,6];
+			adjacencyMatrix[3]  = [0,1,4,5];
+			adjacencyMatrix[4]  = [2,5,3,6];
+			adjacencyMatrix[5]  = [1,2,3,4];
+			adjacencyMatrix[6]  = [0,2,4];
+			
+			break;
+		case 4:
+			name = "Maze";
+			translate = new Point(9.5, .5).add(new Point(40, 80));
+			
+			polygons[0]  = new Polygon([40,20],[60,20],[60,60],[20,60],[20,40],[40,40]);
+			polygons[1]  = new Polygon([160,70],[180,70],[180,130],[160,130],[160,110],[140,110],[140,90],[160,90]);
+			polygons[2]  = new Polygon([190,40],[210,40],[210,90],[200,90],[200,130],[180,130],[180,70],[190,70]);
+			polygons[3]  = new Polygon([60,10],[120,10],[120,30],[80,30],[80,50],[110,50],[110,70],[80,70],[80,100],[60,100],[60,80],[10,80],[10,60],[60,60]);
+			polygons[4]  = new Polygon([20,80],[60,80],[60,100],[80,100],[80,120],[40,120],[40,100],[20,100]);
+			polygons[5]  = new Polygon([0,100],[40,100],[40,120],[60,120],[60,170],[40,170],[40,140],[20,140],[20,120],[0,120]);
+			polygons[6]  = new Polygon([80,30],[120,30],[120,0],[180,0],[180,30],[190,30],[190,50],[160,50],[160,20],[140,20],[140,50],[80,50],[80,30],[120,30]);
+			polygons[7]  = new Polygon([80,70],[140,70],[140,130],[80,130]);
+			polygons[8]  = new Polygon([140,20],[160,20],[160,50],[190,50],[190,70],[160,70],[160,90],[140,90],[140,70],[110,70],[110,50],[140,50]);
+			polygons[9]  = new Polygon([60,120],[80,120],[80,130],[110,130],[110,150],[140,150],[140,180],[120,180],[120,170],[90,170],[90,150],[60,150]);
+			polygons[10] = new Polygon([140,110],[160,110],[160,130],[190,130],[190,150],[160,150],[160,180],[140,180],[140,150],[110,150],[110,130],[140,130]);
+
+
+			adjacencyMatrix[0]  = [3];
+			adjacencyMatrix[1]  = [2,7,8,10];
+			adjacencyMatrix[2]  = [1,6,8,10];
+			adjacencyMatrix[3]  = [0,4,6,7,8];
+			adjacencyMatrix[4]  = [3,5,7,9];
+			adjacencyMatrix[5]  = [4,9];
+			adjacencyMatrix[6]  = [2,3,8];
+			adjacencyMatrix[7]  = [1,3,4,8,9,10];
+			adjacencyMatrix[8]  = [1,2,3,6,7];
+			adjacencyMatrix[9]  = [4,5,7,10];
+			adjacencyMatrix[10] = [1,2,7,9];
+			
+		
+			break;	
+		case 5:
+			name = "Pandemonium";
+			translate = new Point(19.5, 12.5);
+		
+			polygons[0]  = new Polygon([0,0],[100,0],[100,100],[0,100]).id(0);
+			polygons[1]  = new Polygon([100,0],[280,0],[280,100],[260,100],[260,20],[100,20]).id(1);
+			polygons[2]  = new Polygon([100,20],[180,20],[180,40],[120,40],[120,80],[180,80],[180,100],[100,100]).id(2);
+			polygons[3]  = new Polygon([120,40],[180,40],[180,80],[120,80]).id(3);
+			polygons[4]  = new Polygon([180,40],[240,40],[240,80],[180,80]).id(4);
+			polygons[5]  = new Polygon([180,20],[260,20],[260,100],[180,100],[180,80],[240,80],[240,40],[180,40]).id(5);
+			polygons[6]  = new Polygon([180,100],[280,100],[280,140],[180,140]).id(6);
+			polygons[7]  = new Polygon([40,140],[140,140],[140,200],[40,200]).id(7);
+			polygons[8]  = new Polygon([40,100],[180,100],[180,240],[140,240],[140,140],[40,140]).id(8);
+			polygons[9]  = new Polygon([0,100],[20,100],[20,220],[140,220],[140,240],[0,240]).id(9);
+			polygons[10] = new Polygon([20,100],[40,100],[40,200],[140,200],[140,220],[20,220]).id(10);
+			//polygons[11] = new Polygon([180,140],[280,140],[280,240],[240,240],[240,180],[220,180],[220,240],[180,240]).id(11);
+				
+			polygons[11]  = new Polygon([180,140],[280,140],[280,180],[220,180],[220,240],[180,240]);
+			polygons[12]  = new Polygon([220,180],[240,180],[240,260],[120,260],[120,240],[220,240]);
+			polygons[13]  = new Polygon([240,180],[260,180],[260,280],[120,280],[120,260],[240,260]);
+			polygons[14]  = new Polygon([260,180],[280,180],[280,300],[120,300],[120,280],[260,280]);
+			polygons[15]  = new Polygon([100,240],[120,240],[120,300],[280,300],[280,320],[100,320]);
+			polygons[16]  = new Polygon([0,240],[20,240],[20,300],[100,300],[100,320],[0,320]);
+			polygons[17]  = new Polygon([20,240],[60,240],[60,300],[20,300]);
+			polygons[18]  = new Polygon([60,240],[100,240],[100,300],[60,300]);
+
+				
+				
+			adjacencyMatrix[0]  = [1,2,8,9,10];
+			adjacencyMatrix[1]  = [0,2,5,6];
+			adjacencyMatrix[2]  = [0,1,3,5,8];
+			adjacencyMatrix[3]  = [2,4];
+			adjacencyMatrix[4]  = [3,5];
+			adjacencyMatrix[5]  = [1,2,4,6];
+			adjacencyMatrix[6]  = [1,5,8,11];
+			adjacencyMatrix[7]  = [8,10];
+			adjacencyMatrix[8]  = [0,2,6,7,10,11,12];
+			adjacencyMatrix[9]  = [0,8,10,15,16,17,18];
+			adjacencyMatrix[10] = [0,7,8,9];
+			adjacencyMatrix[11] = [6,8,12,13,14];	
+			adjacencyMatrix[12] = [8,11,13,15];
+			adjacencyMatrix[13] = [12,14,15];
+			adjacencyMatrix[14] = [11,13,15];
+			adjacencyMatrix[15] = [9,12,13,14,16,18];
+			adjacencyMatrix[16] = [9,17,18];
+			adjacencyMatrix[17] = [9,16,18];
+			adjacencyMatrix[18] = [9,16,17,15,18];
+			break;
+		default: 
+			return false;
+			break;
+	}
+		
+	var data = new Array();
+	
+	// Apply translation to each polygon:
+	for(var k in polygons) {
+		polygons[k].translate = translate;
+		polygons[k].id(k);
+	}
+	
+	data['polygons']        = polygons;
+	data['translate']		= translate;
+	data['adjacencyMatrix'] = adjacencyMatrix;
+	data['name']			= name;
+	
+	return data;
+}
+
+// A card layout:
+function GerjoCardLayout() {
+	var cards        = new Array();
+
+	this.showCard = function(div) {
+		if(cards[div] == null) alert("Trying to show non existing card. ID: " + div);
+		
+		$("#" + div).fadeIn();
+	}
+
+	this.addCard = function(div) {
+		cards[div] = document.getElementById(div);
+		
+		$("#" + div).hide();
+	}
+	
+	this.hideCard = function(div) {
+		if(cards[div] == null) alert("Trying to hide non existing card. ID: " + div);
+
+		$("#" + div).fadeOut();
+	}
+	
+	// Some sort of "constructor".
+	for(var i = 0; i < arguments.length; i++ ) {
+		this.addCard(arguments[i]);
+	}
+}
+
+function Polygon() {
+	this.points      = new Array();
+	this.fillColor   = "";
+	this.borderColor = "#9f9f9f";
+	this.borderWidth = 1;
+	this.translate   = new Point(0, 0);
+	this.objectID    = -1;
+
+
+	this.draw = function(graphics) {
+		var points = this.getPoints();
+		graphics.beginPath();
+		graphics.moveTo(points[0].x + this.translate.x, points[0].y + this.translate.y);
+		
+		for(var k in points) {
+			graphics.lineTo(points[k].x + this.translate.x, points[k].y + this.translate.y);
+		}
+		
+		
+		
+		graphics.strokeStyle = this.borderColor; 
+		graphics.fillStyle   = this.fillColor;
+		graphics.lineCap     = "round";
+		graphics.lineWidth   = this.borderWidth;
+		if(this.fillColor != "") graphics.fill();
+		graphics.stroke();
+		
+		if(true) return;
+		try {
+		// Debug stuff, used to manually determine the adjecency matrix.
+		graphics.fillStyle    = "#000";
+		graphics.textBaseline = 'hanging';
+		graphics.font = 'normal 10px verdana'
+		graphics.fillText(this.objectID + "", points[0].x+this.translate.x+3, points[0].y+this.translate.y);
+		} catch(e) {}
+	}
+	
+	this.id = function(id) {
+		this.objectID = id;
+		return this;
+	}
+	
+	this.add = function(newPoint) {
+		if(newPoint.hasOwnProperty("x")) {
+			// Accepting "Point" style coordinates:
+			this.points.push(newPoint);
+		} else {
+			// Accepting JSON style coordinates:
+			this.points.push(new Point(newPoint[0], newPoint[1]));
+		}
+	}
+	
+	// Retrieve the point coordinates of this polygon. The last coordinate is always the same as the first.
+	this.getPoints = function() {
+		if(!this.points[0].equals(this.points[this.points.length-1])) {
+			return this.points.concat(new Array(this.points[0]));
+		}
+		return this.points;
+	}
+	
+	// Build lines from this Polygon's points.
+	this.getLines = function() {
+		var points = this.getPoints();
+		var lines  = new Array();
+		
+		for(var i = 0; i < points.length - 1; ++i) {
+			lines.push(new Line(points[i].add(this.translate), points[i + 1].add(this.translate)));
+		}
+		
+		return lines;
+	}
+	
+	this.hasPointInPolygon = function(point) {
+		var rayLine       = new Line(point, point.add(new Point(this.getBiggestXvalue(), 0)));
+		var lines         = this.getLines();
+		var intersections = 0;
+		for(var k in lines) {
+			if(lines[k].testWith(rayLine) != null) ++intersections;
+		}
+		return !(intersections % 2 == 0);
+	}
+	
+	this.getBiggestXvalue = function() {
+		var points  = this.getPoints();
+		var biggest = -1;
+		for(var k in points) {
+			biggest = Math.max(biggest, points[k].x);
+		}
+		return biggest;
+	}
+	
+	// Some sort of "constructor".
+	for(var i = 0; i < arguments.length; i++ ) {
+		this.add(arguments[i]);
+	}
+}
+
+// Point class, with some basic vector math routines:
+function Point(x, y) {
+	this.x = x;
+	this.y = y;
+	
+	this.asArray = function() {
+		return [x,y];
+	}
+	
+	this.equals = function(otherPoint) {
+		return (this.x == otherPoint.x && this.y == otherPoint.y);
+	}
+	
+	this.dotProduct = function(pointB) {
+		return (this.x * pointB.x) + (this.y * pointB.y);
+	}
+	
+	this.substract = function(pointB) {
+		return new Point(this.x - pointB.x, this.y - pointB.y);
+	}
+	
+	this.add = function(pointB) {
+		return new Point(this.x + pointB.x, this.y + pointB.y);
+	}
+	
+	this.clone = function() {
+		return new Point(this.x, this.y);
+	}
+	
+	this.perp = function() {
+		// Return the perpendicular point (vector actually).
+		return new Point(-1 * this.y, this.x);
+	}
+	
+	this.multiply = function(scalar) {
+		return new Point(this.x * scalar, this.y * scalar);
+	}
+	
+	this.normalize = function() {
+		var len = Math.sqrt((this.x * this.x) + (this.y * this.y));
+		x /= len;
+		y /= len;
+		return this;
+	}
+	
+	this.toString = function() {
+		return "[Point Object (x:" + this.x + ", y:" + this.y + ")]";
+	}
+}
+
+// Line segment class. Used for point in polygon calculations:
+function Line(placePoint, endPoint) {
+	this.placePoint = placePoint;
+	this.endPoint   = endPoint;
+	
+	this.testWith   = function(lineB) {
+		var lambdaA = this.getLambda(lineB);
+		
+		if(lambdaA >= 0 && lambdaA <= 1) {
+			var lambdaB = lineB.getLambda(this);
+			if(lambdaB >= 0 && lambdaB <= 1) {
+				// return the point of intersection:
+				return lineB.getDirectionPoint().multiply(lambdaA).add(placePoint);
+			}
+		}
+		
+		return null;
+	}
+	
+	this.getLambda = function(lineB) {
+		var rn = this.getDirectionPoint().dotProduct(lineB.getNormalized());
+		var sn = placePoint.dotProduct(lineB.getNormalized());
+		
+		return (lineB.getConstante() - sn) / rn;
+	}
+	
+	this.getDirectionPoint = function() {
+		// Vector AB = B-A
+		return endPoint.substract(placePoint);
+	}
+	
+	this.getNormalized = function(lineB) {
+		return this.getDirectionPoint().perp().normalize();
+	}
+	
+	this.getConstante = function() {
+		return placePoint.dotProduct(this.getNormalized());
+	}
+}
+
+// Because Safari still hasn't this functionality build-in.
+var showAlerts = true;
+window.alert = function(msg) {
+	if(!showAlerts) return;
+	showAlerts = confirm(msg);
+}
+
+</script>
+<style type="text/css" media="screen, mobile">
+body {
+	overflow:hidden;background: url(wallpaper_stripe.gif) -2px 0px;margin:0px;padding:0px;
+}
+
+.factory_card { display:none;width: 320px;height: 460px;position:absolute; left:0px; background: url(wallpaper_stripe.gif) -2px 0px; }
+
+.game { 
+	width: 100%;height: 100%; /* 356px */ border:0px solid #9f9f9f; position:relative;
+}
+.colorSelectorBox {
+	float:left; margin-left:10px; width:68px; height:40px;
+}
+.colorSelectorBox div {
+	height:100%; width:100%; background:url(selector.png) center center no-repeat;
+}
+
+#canvasBox {cursor:pointer;background:url(whitebg.png) center 0px no-repeat; width:100%; height:360px;}
+
+div.toolbar { padding-top:7px; background:url(header.gif) 0px 0px repeat-x; height:46px; margin-bottom:2px; width:100%; }
+
+div.title {
+	text-decoration: none;
+	font-weight: bold;
+	font-size: 18px;
+	font-family: Helvetica, Arial, sans-serif;
+	color: #fff;
+	text-shadow: 0 -1px 0 #4e5763;
+	float:left;
+	line-height:30px;
+	margin:0px 7px 0px 7px;
+}
+
+div.toolbarButton {
+	text-decoration: none;
+	font-weight: bold;
+	font-size: 12px;
+	font-family: Helvetica, Arial, sans-serif;
+	color: #fff;
+	text-shadow: 0 -1px 0 #000;
+	line-height: 30px;
+	display: block;
+	border-width: 0 8px 0 8px;
+	-webkit-border-image: url("button.gif") 0 8 0 8;
+	line-height: 30px;
+	margin:0px 6px 0px 6px;
+	float:right;
+	cursor:pointer;
+}
+
+.blue { color:#6600ff; }
+.green { color:#98e88b; }
+.yellow { color:#fdff5b; }
+.pink { color:#ff00c0; }
+.red { color:red;}
+
+div.whiteboxTop {
+	background:url(whitebg.png) 9px 0px no-repeat; width:282px;
+	font-weight: bold;
+	font-size: 14px;
+	font-family: Helvetica, Arial, sans-serif;
+	padding:10px 20px 0px 20px;
+}
+
+div.whiteboxBottom {
+	background:url(whitebg.png) center bottom no-repeat;
+	width:100%; height:10px;
+	margin-bottom:9px;
+}
+
+.backgroundText {
+	width:100%; text-align:center; 
+	font-weight: bold;
+	font-size: 12px;
+	font-family: Helvetica, Arial, sans-serif;
+	color: #606672;
+	text-shadow: 0 1px 0 #fff;
+}
+
+div.bottomFloat { position:absolute;bottom:9px;}
+
+.left {text-align:left;}
+
+div.popup { 
+	display:none;
+	margin-top:120px;
+	padding:6px 30px 0px 30px;
+	font-weight: bold;
+	font-size: 16px;
+	font-family: Helvetica, Arial, sans-serif;
+	color: #fff;
+	text-shadow: 0 -1px 0 #000; text-align:center;
+	top:0px; position:absolute; background:url(glowpopup.png) 11px top no-repeat; width: 268px; height:139px;
+}
+
+div.popup a {
+	text-decoration: none;
+	font-weight: bold;
+	font-size: 14px;
+	font-family: Helvetica, Arial, sans-serif;
+	color: #fff;
+	text-shadow: 0 -1px 0 #000;
+	line-height: 30px;
+	display: block;
+	border-width: 0 8px 0 8px;
+	-webkit-border-image: url("buttonbluedark.png") 0 8 0 8;
+	line-height: 43px;
+	margin:0px 6px 0px 0px;
+	float:left;
+	cursor:pointer;
+	width:111px;
+	text-align:center;
+}
+
+div.popup a.light {
+	-webkit-border-image: url("buttonbluelight.png") 0 8 0 8;
+}
+
+
+div#leveloption {
+	padding-bottom:8px;
+}
+
+div#leveloption div {
+	background:url(whitearrowbg.gif) 9px 0px no-repeat;
+	height:44px;
+	width:282px;
+	font-weight: bold;
+	font-size: 16px;
+	font-family: Helvetica, Arial, sans-serif;
+	padding:0px 20px 0px 20px;
+	line-height:44px;
+	cursor:pointer;
+}
+
+div#leveloption div:first-child {
+	background:url(whitearrowbg_top.png) 9px 0px no-repeat;
+}
+
+div#leveloption div:last-child {
+	background:url(whitearrowbg_bottom.png) 9px 0px no-repeat;
+}
+
+div#selectAcolor {
+	height: 120px; width:100%; background:url(selectAcolor.png) center top no-repeat; position:absolute; left:0px; top:300px;
+}
+div#touchToPaint {
+	height: 326px; width:100%; background:url(touchtopaint.png) center top no-repeat; position:absolute; left:0px; top:65px;
+}
+div#paintAll {
+	height: 326px; width:100%; background:url(paintall.png) center top no-repeat; position:absolute; left:0px; top:65px;
+}
+
+</style>
+</head>
+<body onLoad="init()">
+<div id="debug" style="display:;left:350px;font-size:10px;position:absolute;font-family:Verdana, Arial, Helvetica, sans-serif; color:#FF0000;"></div>
+
+<div class="factory_card" id="card_game">
+	<div class="game">
+		<div class="toolbar">
+			<div class="title">Level <span id="currentLevel">1</span></div>
+			<div class="toolbarButton" onClick="gerjoCardLayout.showCard('card_in_game_menu');">Select Level</div>
+		</div>
+		
+		<div id="canvasBox">
+			<canvas id="canvas" width="320" height="360"></canvas>
+		</div>
+		
+		<div class="bottomFloat">
+			<div class="colorSelectorBox" id="colorSelectorBox_0" style="background:url(color1.png); margin-left:9px;"><div id="colorSelector_0" style="display:none;"></div></div>
+			<div class="colorSelectorBox" id="colorSelectorBox_2" style="background:url(color3.png);"><div id="colorSelector_2" style="display:none;"></div></div>
+			<div class="colorSelectorBox" id="colorSelectorBox_1" style="background:url(color2.png);"><div id="colorSelector_1" style="display:none;"></div></div>
+			<div class="colorSelectorBox" id="colorSelectorBox_3" style="background:url(color4.png);"><div id="colorSelector_3" style="display:none;"></div></div>
+		</div>
+		<div id="selectAcolor" style="display:;"></div>
+		<div id="touchToPaint" style="display:none;"></div>
+		<div id="paintAll" style="display:none;"></div>
+		
+	</div>
+</div>
+
+<div class="factory_card" id="card_intro" style="display:block;">
+	<div class="game">
+		<div class="toolbar">
+			<div class="title">Four Color Game</div>
+			<div class="toolbarButton" onClick="gerjoCardLayout.showCard('card_in_game_menu');">Select Level</div>
+		</div>
+		
+		<div class="whiteboxTop">
+			Using 4 different colors, paint the drawing so none of the adjacent sides have the same color.
+			 <br /><br />
+			Sounds easy enough?
+		</div>
+		<div class="whiteboxBottom"></div>
+		
+		<a class="white button" style="cursor:pointer;" onClick="javascript:gerjoCardLayout.hideCard('card_intro')">Start Game</a>
+		
+
+
+		<div class="backgroundText bottomFloat" style="height:130px;">
+			This game has been created by Gerard Meier.
+			www.gerardmeier.com
+		</div>
+		
+	</div>
+</div>
+
+<div class="factory_card" id="card_in_game_menu">
+	<div class="game" style="height:auto;">
+		<div class="toolbar">
+			<div class="title">Four Color Game</div>
+			<div class="toolbarButton" onClick="gerjoCardLayout.hideCard('card_in_game_menu');">Cancel</div>
+		</div>
+		
+		<div id="leveloption">
+			Loading levels...
+		</div>
+		
+		
+	</div>
+</div>
+
+<div class="popup" id="popup_level_completed">
+	Success!<br />
+	<div style="font-weight:normal; margin-top:5px; height:45px;">
+		You completed level <span id="level_in_popup">1</span>!
+	</div>
+	
+	<a class="light" onClick="GerjoFourColorGame.retryLevel();">Try Again</a> <a onClick="GerjoFourColorGame.nextLevel();">Next Level</a>
+</div>
+
+<div class="popup" id="popup_game_completed">
+	Game Completed!<br />
+	<div style="font-weight:normal; margin-top:5px; height:45px;">
+		Congratulations! You've completed <br />all playable levels in this game!
+	</div>
+	
+	<a class="light" onClick="GerjoFourColorGame.retryLevel();">Try Again</a> <a onClick="gerjoCardLayout.showCard('card_intro');GerjoFourColorGame.restartGame();">New Game</a>
+</div>
+
+
+</body>
+</html>
